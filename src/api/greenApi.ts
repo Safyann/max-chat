@@ -25,7 +25,7 @@ const ERROR_REASONS: Record<number, string> = {
   469: 'MAX ограничил проверку номеров, повторите через пару часов',
 };
 
-const buildUrl =({ apiUrl, idInstance, apiTokenInstance }: Credentials, method: string, suffix = '') =>
+const buildUrl = ({ apiUrl, idInstance, apiTokenInstance }: Credentials, method: string, suffix = '') =>
   `${apiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/${method}/${apiTokenInstance}${suffix}`;
 
 const request = async <T>(url: string, init?: RequestInit): Promise<T | null> => {
@@ -43,7 +43,12 @@ const request = async <T>(url: string, init?: RequestInit): Promise<T | null> =>
 
   // receiveNotification отдаёт пустое тело (или null), если за receiveTimeout уведомлений не пришло
   const text = await response.text();
-  return text ? (JSON.parse(text) as T | null) : null;
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T | null;
+  } catch {
+    throw new GreenApiError('Некорректный ответ GREEN-API — проверьте apiUrl', response.status);
+  }
 };
 
 export const getStateInstance = async (credentials: Credentials, signal?: AbortSignal) => {
@@ -65,8 +70,12 @@ export const checkAccount = async (credentials: Credentials, phone: string) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phoneNumber: Number(phone) }),
   });
-  if (!data) throw new GreenApiError('Пустой ответ checkAccount');
-  return data;
+  // неавторизованный инстанс отвечает 200 с { status: false, reason } вместо { exist, chatId }
+  if (data && (data as { status?: unknown }).status === false) {
+    throw new GreenApiError('Инстанс ещё запускается или не авторизован');
+  }
+  // null — ответ без exist: инстанс не MAX и метод не поддерживает
+  return data && typeof data.exist === 'boolean' ? data : null;
 };
 
 export const sendMessage = async (credentials: Credentials, chatId: string, message: string) => {

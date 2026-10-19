@@ -73,7 +73,17 @@ const adoptChatByPhone = (state: ChatState, chatId: string, phone: string): Chat
   };
 };
 
-const updateMessage =(chat: Chat, id: string, update: (message: Message) => Message): Chat => ({
+/**
+ * Чат, где лежит отправляемое сообщение. Пока шёл sendMessage, чат мог переехать под другой chatId
+ * (adoptChatByPhone) — тогда ищем по localId, чтобы не создать пустой чат-призрак под старым chatId.
+ */
+const findChatWithMessage = (state: ChatState, chatId: string, messageId: string): Chat | undefined => {
+  const hasMessage = (chat: Chat) => chat.messages.some((message) => message.id === messageId);
+  const chat = state.chats[chatId];
+  return chat && hasMessage(chat) ? chat : Object.values(state.chats).find(hasMessage);
+};
+
+const updateMessage = (chat: Chat, id: string, update: (message: Message) => Message): Chat => ({
   ...chat,
   messages: chat.messages.map((message) => (message.id === id ? update(message) : message)),
 });
@@ -146,7 +156,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
     }
 
     case 'sendSucceeded': {
-      const chat = getChat(state, action.chatId);
+      const chat = findChatWithMessage(state, action.chatId, action.localId);
+      if (!chat) return state;
       // уведомление outgoingAPIMessageReceived могло прийти раньше ответа sendMessage — тогда убираем локальную копию
       if (chat.messages.some((message) => message.id === action.idMessage)) {
         return withChat(state, {
@@ -161,7 +172,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
     }
 
     case 'sendFailed': {
-      const chat = getChat(state, action.chatId);
+      const chat = findChatWithMessage(state, action.chatId, action.localId);
+      if (!chat) return state;
       return withChat(state, updateMessage(chat, action.localId, (message) => ({ ...message, status: 'failed' })));
     }
   }

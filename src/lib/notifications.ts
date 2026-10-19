@@ -49,8 +49,9 @@ export const parseWebhook = (body: WebhookBody): ChatEvent | null => {
     return {
       kind: 'message',
       chatId: senderData.chatId,
-      // в исходящих senderName — это мы сами, поэтому имя собеседника берём только из входящих
-      chatName: isIncoming ? senderData.senderContactName || senderData.chatName || senderData.senderName : undefined,
+      // в исходящих senderName — это мы сами, поэтому имя собеседника берём только из входящих;
+      // chatName первым: в группе sender* — это участник, а не название группы
+      chatName: isIncoming ? senderData.chatName || senderData.senderContactName || senderData.senderName : undefined,
       phone: isIncoming && senderData.senderPhoneNumber ? String(senderData.senderPhoneNumber) : undefined,
       id: webhook.idMessage,
       text,

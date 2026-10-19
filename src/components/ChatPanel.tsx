@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { MessageStatus } from '../api/types';
 import type { Chat } from '../lib/chatReducer';
 import { formatChatId } from '../lib/phone';
@@ -32,9 +32,25 @@ export const ChatPanel = ({ chat, onSend, onBack }: ChatPanelProps) => {
   const subtitle = chat.phone ? `+${chat.phone}` : formatChatId(chat.chatId);
   const title = chat.title || subtitle;
 
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [chat.chatId, chat.messages.length]);
+  const wasAtBottomRef = useRef(true);
+  const lastMessage = chat.messages.at(-1);
+
+  // при открытии чата и своём сообщении — вниз; входящее не сбивает прокрутку, если пользователь читает историю выше
+  useLayoutEffect(() => {
+    wasAtBottomRef.current = true;
+  }, [chat.chatId]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (list && (wasAtBottomRef.current || lastMessage?.direction === 'out')) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [chat.chatId, chat.messages.length, lastMessage?.direction]);
+
+  const handleScroll = () => {
+    const list = listRef.current;
+    if (list) wasAtBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  };
 
   return (
     <section className="chat-panel">
@@ -51,7 +67,7 @@ export const ChatPanel = ({ chat, onSend, onBack }: ChatPanelProps) => {
         </div>
       </header>
 
-      <div className="messages" ref={listRef} role="log" aria-live="polite">
+      <div className="messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite">
         {chat.messages.length === 0 && <p className="messages__empty">Напишите первое сообщение</p>}
         {chat.messages.map((message) => (
           <div key={message.id} className={`message message--${message.direction}`}>

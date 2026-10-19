@@ -33,9 +33,26 @@ export const clearCredentials = () => {
   }
 };
 
-export const loadChats = (idInstance: string): ChatState => ({
-  chats: read<ChatState['chats']>(localStorage, chatsKey(idInstance)) ?? initialChatState.chats,
-  activeChatId: null,
-});
+// сообщение, оставшееся «отправляется» после перезагрузки, уже никогда не получит ответ sendMessage
+const markInterruptedAsFailed = (chats: ChatState['chats']): ChatState['chats'] =>
+  Object.fromEntries(
+    Object.entries(chats).map(([chatId, chat]) => [
+      chatId,
+      {
+        ...chat,
+        messages: chat.messages.map((message) =>
+          message.status === 'pending' ? { ...message, status: 'failed' as const } : message,
+        ),
+      },
+    ]),
+  );
+
+export const loadChats = (idInstance: string): ChatState => {
+  const stored = read<ChatState['chats']>(localStorage, chatsKey(idInstance));
+  return {
+    chats: stored ? markInterruptedAsFailed(stored) : initialChatState.chats,
+    activeChatId: null,
+  };
+};
 export const saveChats = (idInstance: string, chats: ChatState['chats']) =>
   write(localStorage, chatsKey(idInstance), chats);

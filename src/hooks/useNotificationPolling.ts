@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { deleteNotification, receiveNotification } from '../api/greenApi';
-import type { Credentials } from '../api/types';
+import type { Credentials, WebhookBody } from '../api/types';
 import { parseWebhook, type ChatEvent } from '../lib/notifications';
 
 const RECEIVE_TIMEOUT_SECONDS = 20;
@@ -10,12 +10,26 @@ const isAbort = (error: unknown) => error instanceof DOMException && error.name 
 
 const delay = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
+
+const handleSafely = (body: unknown, onEvent: (event: ChatEvent) => void) => {
+  try {
+    const event = parseWebhook(body as WebhookBody);
+    if (event) onEvent(event);
+  } catch (error) {
+    // уведомление неожиданного формата не должно навсегда застрять в голове очереди
+    console.warn('GREEN-API: не удалось обработать уведомление', body, error);
+  }
+};
 
 /**
  * Long polling очереди уведомлений GREEN-API: receiveNotification → обработка → deleteNotification.
@@ -37,8 +51,7 @@ export const useNotificationPolling = (credentials: Credentials, onEvent: (event
           setError(null);
           if (!notification) continue;
 
-          const event = parseWebhook(notification.body);
-          if (event) onEventRef.current(event);
+          handleSafely(notification.body, onEventRef.current);
           await deleteNotification(credentials, notification.receiptId, signal);
         } catch (err) {
           if (isAbort(err)) return;

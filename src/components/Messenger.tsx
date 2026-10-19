@@ -14,6 +14,10 @@ import { NewChatForm } from './NewChatForm';
 // так отвечает инстанс, у которого нет checkAccount (WhatsApp) или номер вне +7/+375
 const METHOD_UNSUPPORTED_STATUSES = new Set([400, 404, 405]);
 
+// crypto.randomUUID есть только в secure context: при открытии dev-сервера по http://192.168.x.x отправка падала бы
+const createLocalId = () =>
+  `local-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
+
 interface MessengerProps {
   credentials: Credentials;
   onLogout: () => void;
@@ -42,9 +46,12 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
 
   const chats = useMemo(
     () =>
-      Object.values(state.chats).sort(
-        (a, b) => (b.messages.at(-1)?.timestamp ?? 0) - (a.messages.at(-1)?.timestamp ?? 0),
-      ),
+      // только что созданный пустой чат — наверх, а не в конец списка
+      Object.values(state.chats).sort((a, b) => {
+        const lastA = a.messages.at(-1)?.timestamp ?? Number.MAX_SAFE_INTEGER;
+        const lastB = b.messages.at(-1)?.timestamp ?? Number.MAX_SAFE_INTEGER;
+        return lastB - lastA;
+      }),
     [state.chats],
   );
   const activeChat = state.activeChatId ? state.chats[state.activeChatId] : null;
@@ -65,8 +72,8 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
     let chatId = phoneToChatId(phone);
     try {
       const account = await checkAccount(credentials, phone);
-      if (!account.exist) throw new Error('У этого номера нет аккаунта MAX');
-      chatId = account.chatId;
+      if (account && !account.exist) throw new Error('У этого номера нет аккаунта MAX');
+      if (account) chatId = account.chatId;
     } catch (err) {
       const isUnsupported = err instanceof GreenApiError && METHOD_UNSUPPORTED_STATUSES.has(err.status ?? 0);
       if (!isUnsupported) throw err;
@@ -77,7 +84,7 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
   const handleSend = async (text: string) => {
     if (!activeChat) return;
     const { chatId } = activeChat;
-    const localId = `local-${crypto.randomUUID()}`;
+    const localId = createLocalId();
     dispatch({ type: 'sendStarted', chatId, localId, text, timestamp: Date.now() });
     try {
       const idMessage = await sendMessage(credentials, chatId, text);

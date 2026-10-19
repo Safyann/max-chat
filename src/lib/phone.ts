@@ -1,10 +1,16 @@
-/** Приводит введённый номер к виду 79991234567: только цифры, ведущая 8 → 7. */
+/**
+ * Приводит введённый номер к виду 79991234567: только цифры, ведущая 8 → 7,
+ * российский мобильный без кода страны (9991234567) → с кодом 7.
+ */
 export const normalizePhone = (input: string) => {
   const digits = input.replace(/\D/g, '');
-  return digits.length === 11 && digits.startsWith('8') ? `7${digits.slice(1)}` : digits;
+  if (digits.length === 11 && digits.startsWith('8')) return `7${digits.slice(1)}`;
+  if (digits.length === 10 && digits.startsWith('9')) return `7${digits}`;
+  return digits;
 };
 
-export const isValidPhone = (phone: string) => /^\d{10,15}$/.test(phone);
+// номер без кода страны дал бы несуществующий chatId, и сообщения молча уходили бы в никуда
+export const isValidPhone = (phone: string) => /^\d{11,15}$/.test(phone);
 
 export const phoneToChatId = (phone: string) => `${phone}@c.us`;
 

@@ -3,6 +3,7 @@ import { chatReducer, initialChatState, type ChatState } from './chatReducer';
 import { parseWebhook, type ChatEvent } from './notifications';
 import { formatChatId, isValidPhone, normalizePhone, phoneToChatId } from './phone';
 import { diagnoseSettings } from './settings';
+import { formatTime } from './time';
 
 const CHAT_ID = '79991234567@c.us';
 
@@ -21,7 +22,9 @@ describe('phone', () => {
   it('нормализует номер и строит chatId', () => {
     expect(normalizePhone('+7 (999) 123-45-67')).toBe('79991234567');
     expect(normalizePhone('8 999 123 45 67')).toBe('79991234567');
+    expect(normalizePhone('999 123-45-67')).toBe('79991234567');
     expect(isValidPhone('123')).toBe(false);
+    expect(isValidPhone('4951234567')).toBe(false);
     expect(phoneToChatId('79991234567')).toBe(CHAT_ID);
     expect(formatChatId(CHAT_ID)).toBe('+79991234567');
     expect(formatChatId('10000000')).toBe('10000000');
@@ -62,6 +65,14 @@ describe('parseWebhook', () => {
     const image = { ...incoming('m3', ''), messageData: { typeMessage: 'imageMessage' } };
     expect(parseWebhook(image)).toBeNull();
     expect(parseWebhook({ typeWebhook: 'stateInstanceChanged' })).toBeNull();
+  });
+
+  it('для группы берёт название чата, а не имя участника', () => {
+    const group = {
+      ...incoming('g1', 'всем привет'),
+      senderData: { chatId: '-6987', chatName: 'Команда', senderName: 'Иван', senderContactName: 'Иван' },
+    };
+    expect(parseWebhook(group)).toMatchObject({ chatName: 'Команда' });
   });
 
   it('разбирает статус исходящего', () => {
@@ -164,6 +175,17 @@ describe('chatReducer', () => {
     expect(state.chats['10000000'].messages.map((m) => m.text)).toEqual(['привет', 'r1', 'r2']);
   });
 
+  it('завершение отправки после переезда чата не создаёт чат-призрак', () => {
+    let state = chatReducer(initialChatState, { type: 'chatOpened', chatId: CHAT_ID });
+    state = chatReducer(state, { type: 'sendStarted', chatId: CHAT_ID, localId: 'l', text: 'привет', timestamp: 1 });
+    const maxIncoming = { ...incoming('m1', 'ответ'), senderData: { chatId: '10000000', senderPhoneNumber: 79991234567 } };
+    state = apply(state, parseWebhook(maxIncoming)!); // чат переехал, пока sendMessage ещё в полёте
+    state = chatReducer(state, { type: 'sendSucceeded', chatId: CHAT_ID, localId: 'l', idMessage: 'api-1' });
+
+    expect(Object.keys(state.chats)).toEqual(['10000000']);
+    expect(state.chats['10000000'].messages[0]).toMatchObject({ id: 'api-1', status: 'sent' });
+  });
+
   it('игнорирует статус сообщения из незнакомого чата', () => {
     const state = apply(initialChatState, { kind: 'status', chatId: 'unknown', id: 'x', status: 'read' });
     expect(state.chats).toEqual({});
@@ -173,5 +195,13 @@ describe('chatReducer', () => {
     let state = chatReducer(initialChatState, { type: 'sendStarted', chatId: CHAT_ID, localId: 'l', text: 'x', timestamp: 1 });
     state = chatReducer(state, { type: 'sendFailed', chatId: CHAT_ID, localId: 'l' });
     expect(state.chats[CHAT_ID].messages[0].status).toBe('failed');
+  });
+});
+
+describe('formatTime', () => {
+  it('сегодня — только время, раньше — с датой', () => {
+    const now = new Date(2026, 9, 19, 12, 0);
+    expect(formatTime(new Date(2026, 9, 19, 9, 5).getTime(), now)).toBe('09:05');
+    expect(formatTime(new Date(2026, 9, 18, 9, 5).getTime(), now)).toMatch(/18.*09:05/);
   });
 });
