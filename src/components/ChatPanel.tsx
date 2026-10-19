@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { MessageStatus } from '../api/types';
-import type { Chat } from '../lib/chatReducer';
+import type { Chat, Message } from '../lib/chatReducer';
 import { formatChatId } from '../lib/phone';
 import { formatTime } from '../lib/time';
 import { MessageInput } from './MessageInput';
@@ -24,11 +24,13 @@ const STATUS_TITLE: Record<MessageStatus, string> = {
 interface ChatPanelProps {
   chat: Chat;
   onSend: (text: string) => void;
+  onRetry: (message: Message) => void;
   onBack: () => void;
 }
 
-export const ChatPanel = ({ chat, onSend, onBack }: ChatPanelProps) => {
+export const ChatPanel = ({ chat, onSend, onRetry, onBack }: ChatPanelProps) => {
   const listRef = useRef<HTMLDivElement>(null);
+  const quotedText = (id: string) => chat.messages.find((message) => message.id === id)?.text;
   const subtitle = chat.phone ? `+${chat.phone}` : formatChatId(chat.chatId);
   const title = chat.title || subtitle;
 
@@ -70,8 +72,19 @@ export const ChatPanel = ({ chat, onSend, onBack }: ChatPanelProps) => {
       <div className="messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite">
         {chat.messages.length === 0 && <p className="messages__empty">Напишите первое сообщение</p>}
         {chat.messages.map((message) => (
-          <div key={message.id} className={`message message--${message.direction}`}>
+          <div
+            key={message.id}
+            className={`message message--${message.direction}${message.unsupported ? ' message--unsupported' : ''}`}
+          >
+            {message.quotedId && (
+              <span className="message__quote">{quotedText(message.quotedId) ?? 'Ответ на сообщение'}</span>
+            )}
             <span className="message__text">{message.text}</span>
+            {message.status === 'failed' && (
+              <button type="button" className="message__retry" onClick={() => onRetry(message)}>
+                Повторить
+              </button>
+            )}
             <span className="message__meta">
               {formatTime(message.timestamp)}
               {message.status && (

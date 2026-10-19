@@ -37,7 +37,10 @@ export const NewChatForm = ({ onCreate }: NewChatFormProps) => {
           className="field__input"
           type="tel"
           value={phone}
-          onChange={(e) => setPhone(e.target.value)}
+          onChange={(e) => {
+            setPhone(e.target.value);
+            setError(null);
+          }}
           placeholder="Номер получателя"
           aria-label="Номер телефона получателя"
           aria-invalid={Boolean(error)}

@@ -11,6 +11,8 @@ export type ChatEvent =
       text: string;
       direction: 'in' | 'out';
       timestamp: number;
+      unsupported?: boolean;
+      quotedId?: string;
     }
   | {
       kind: 'status';
@@ -21,29 +23,45 @@ export type ChatEvent =
 
 const MESSAGE_WEBHOOKS = new Set(['incomingMessageReceived', 'outgoingMessageReceived', 'outgoingAPIMessageReceived']);
 
-const extractText = ({ messageData }: MessageWebhook) => {
+// по заданию поддерживается только текст, но молча терять фото или голосовое нельзя — показываем заглушку
+const MEDIA_LABELS: Record<string, string> = {
+  imageMessage: '🖼 Фото',
+  videoMessage: '🎬 Видео',
+  documentMessage: '📎 Файл',
+  audioMessage: '🎤 Аудио',
+  stickerMessage: 'Стикер',
+  locationMessage: '📍 Геолокация',
+  contactMessage: '👤 Контакт',
+  pollMessage: '📊 Опрос',
+};
+
+const extractText = ({ messageData }: MessageWebhook): { text: string; unsupported?: boolean } => {
   switch (messageData.typeMessage) {
     case 'textMessage':
-      return messageData.textMessageData?.textMessage;
+      return { text: messageData.textMessageData?.textMessage ?? '' };
     case 'extendedTextMessage':
-    // ответ с цитатой («Ответить» в WhatsApp): текст лежит там же, где у extendedTextMessage
+    // ответ с цитатой («Ответить»): текст лежит там же, где у extendedTextMessage
     case 'quotedMessage':
-      return messageData.extendedTextMessageData?.text;
-    default:
-      return undefined;
+      return { text: messageData.extendedTextMessageData?.text ?? '' };
+    default: {
+      const label = MEDIA_LABELS[messageData.typeMessage] ?? 'Сообщение';
+      const caption = messageData.fileMessageData?.caption;
+      return {
+        text: `${label} — откройте в приложении MAX${caption ? `\n${caption}` : ''}`,
+        unsupported: true,
+      };
+    }
   }
 };
 
 /**
  * Превращает тело уведомления GREEN-API в событие чата.
- * Всё, кроме текстовых сообщений и статусов исходящих, возвращает null — по заданию работаем только с текстом.
+ * Служебные уведомления (смена состояния инстанса, звонки и т. п.) возвращают null.
  */
 export const parseWebhook = (body: WebhookBody): ChatEvent | null => {
   if (MESSAGE_WEBHOOKS.has(body.typeWebhook)) {
     const webhook = body as MessageWebhook;
-    const text = extractText(webhook);
-    if (text === undefined) return null;
-
+    const { text, unsupported } = extractText(webhook);
     const { senderData } = webhook;
     const isIncoming = webhook.typeWebhook === 'incomingMessageReceived';
     return {
@@ -57,6 +75,8 @@ export const parseWebhook = (body: WebhookBody): ChatEvent | null => {
       text,
       direction: isIncoming ? 'in' : 'out',
       timestamp: webhook.timestamp * 1000,
+      unsupported,
+      quotedId: webhook.messageData.extendedTextMessageData?.stanzaId,
     };
   }
 

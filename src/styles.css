@@ -424,6 +424,35 @@ a {
   overflow-wrap: anywhere;
 }
 
+.message__quote {
+  flex-basis: 100%;
+  padding: 2px 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message--unsupported .message__text {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.message__retry {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .message__meta {
   margin-left: auto;
   display: flex;

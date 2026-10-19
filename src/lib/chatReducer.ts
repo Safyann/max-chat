@@ -2,13 +2,19 @@ import type { MessageStatus } from '../api/types';
 import type { ChatEvent } from './notifications';
 import { phoneToChatId } from './phone';
 
+export const LOCAL_ID_PREFIX = 'local-';
+
 export interface Message {
-  /** idMessage от GREEN-API; для ещё не отправленного — локальный id */
+  /** idMessage от GREEN-API; для ещё не подтверждённого сервером — локальный id с префиксом local- */
   id: string;
   text: string;
   direction: 'in' | 'out';
   timestamp: number;
   status?: MessageStatus;
+  /** нетекстовое сообщение (фото, файл…): text — подпись-заглушка */
+  unsupported?: boolean;
+  /** id сообщения, на которое это сообщение отвечает */
+  quotedId?: string;
 }
 
 export interface Chat {
@@ -18,6 +24,8 @@ export interface Chat {
   phone?: string;
   messages: Message[];
   unread: number;
+  /** когда чат появился в списке — нужен для сортировки пустых чатов */
+  createdAt?: number;
 }
 
 export interface ChatState {
@@ -26,10 +34,11 @@ export interface ChatState {
 }
 
 export type ChatAction =
-  | { type: 'chatOpened'; chatId: string; phone?: string }
+  | { type: 'chatOpened'; chatId: string; phone?: string; timestamp?: number }
   | { type: 'chatClosed' }
   | { type: 'eventReceived'; event: ChatEvent }
   | { type: 'sendStarted'; chatId: string; localId: string; text: string; timestamp: number }
+  | { type: 'resendStarted'; chatId: string; localId: string }
   | { type: 'sendSucceeded'; chatId: string; localId: string; idMessage: string }
   | { type: 'sendFailed'; chatId: string; localId: string };
 
@@ -38,8 +47,11 @@ export const initialChatState: ChatState = { chats: {}, activeChatId: null };
 // статус исходящего только растёт: поздний «sent» не должен затирать уже пришедший «read»
 const STATUS_RANK: Record<MessageStatus, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: 4 };
 
-const getChat = (state: ChatState, chatId: string): Chat =>
-  state.chats[chatId] ?? { chatId, messages: [], unread: 0 };
+/** Время последней активности чата: последнее сообщение, а для пустого — момент создания. */
+export const chatActivity = (chat: Chat) => chat.messages.at(-1)?.timestamp ?? chat.createdAt ?? 0;
+
+const getChat = (state: ChatState, chatId: string, createdAt = Date.now()): Chat =>
+  state.chats[chatId] ?? { chatId, messages: [], unread: 0, createdAt };
 
 const withChat = (state: ChatState, chat: Chat): ChatState => ({
   ...state,
@@ -83,6 +95,18 @@ const findChatWithMessage = (state: ChatState, chatId: string, messageId: string
   return chat && hasMessage(chat) ? chat : Object.values(state.chats).find(hasMessage);
 };
 
+/**
+ * Локальная копия, которую подтверждает пришедшее исходящее уведомление: тот же текст, ещё без серверного id.
+ * Сначала ищем «отправляется», затем «не отправлено» — после перезагрузки во время отправки
+ * сообщение помечено ошибкой, хотя сервер его принял.
+ */
+const findUnconfirmed = (chat: Chat, text: string) => {
+  const candidates = chat.messages.filter(
+    (message) => message.direction === 'out' && message.id.startsWith(LOCAL_ID_PREFIX) && message.text === text,
+  );
+  return candidates.find((message) => message.status === 'pending') ?? candidates.find((m) => m.status === 'failed');
+};
+
 const updateMessage = (chat: Chat, id: string, update: (message: Message) => Message): Chat => ({
   ...chat,
   messages: chat.messages.map((message) => (message.id === id ? update(message) : message)),
@@ -91,7 +115,7 @@ const updateMessage = (chat: Chat, id: string, update: (message: Message) => Mes
 export const chatReducer = (state: ChatState, action: ChatAction): ChatState => {
   switch (action.type) {
     case 'chatOpened': {
-      const chat = getChat(state, action.chatId);
+      const chat = getChat(state, action.chatId, action.timestamp);
       return {
         ...withChat(state, { ...chat, phone: action.phone || chat.phone, unread: 0 }),
         activeChatId: action.chatId,
@@ -119,10 +143,20 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       }
 
       if (event.phone) state = adoptChatByPhone(state, event.chatId, event.phone);
-      const chat = getChat(state, event.chatId);
+      const chat = getChat(state, event.chatId, event.timestamp);
 
-      // исходящее через API уже лежит в чате после sendSucceeded — повторно не добавляем
+      // повторная доставка того же уведомления
       if (chat.messages.some((message) => message.id === event.id)) return state;
+
+      if (event.direction === 'out') {
+        const unconfirmed = findUnconfirmed(chat, event.text);
+        if (unconfirmed) {
+          return withChat(
+            state,
+            updateMessage(chat, unconfirmed.id, (message) => ({ ...message, id: event.id, status: 'sent' })),
+          );
+        }
+      }
 
       const message: Message = {
         id: event.id,
@@ -130,6 +164,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
         direction: event.direction,
         timestamp: event.timestamp,
         status: event.direction === 'out' ? 'sent' : undefined,
+        unsupported: event.unsupported,
+        quotedId: event.quotedId,
       };
       const isActive = state.activeChatId === event.chatId;
       return withChat(state, {
@@ -144,7 +180,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
     }
 
     case 'sendStarted': {
-      const chat = getChat(state, action.chatId);
+      const chat = getChat(state, action.chatId, action.timestamp);
       const message: Message = {
         id: action.localId,
         text: action.text,
@@ -155,10 +191,16 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       return withChat(state, { ...chat, messages: [...chat.messages, message] });
     }
 
-    case 'sendSucceeded': {
+    case 'resendStarted': {
       const chat = findChatWithMessage(state, action.chatId, action.localId);
       if (!chat) return state;
-      // уведомление outgoingAPIMessageReceived могло прийти раньше ответа sendMessage — тогда убираем локальную копию
+      return withChat(state, updateMessage(chat, action.localId, (message) => ({ ...message, status: 'pending' })));
+    }
+
+    case 'sendSucceeded': {
+      // если уведомление outgoingAPIMessageReceived пришло раньше ответа sendMessage, локальной копии уже нет
+      const chat = findChatWithMessage(state, action.chatId, action.localId);
+      if (!chat) return state;
       if (chat.messages.some((message) => message.id === action.idMessage)) {
         return withChat(state, {
           ...chat,

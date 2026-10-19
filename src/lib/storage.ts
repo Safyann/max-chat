@@ -25,6 +25,12 @@ const write = (storage: Storage, key: string, value: unknown) => {
 // токен держим в sessionStorage: переживает перезагрузку вкладки, но не остаётся в браузере после её закрытия
 export const loadCredentials = () => read<Credentials>(sessionStorage, CREDENTIALS_KEY);
 export const saveCredentials = (credentials: Credentials) => write(sessionStorage, CREDENTIALS_KEY, credentials);
+// apiUrl и idInstance не секретны — запоминаем надолго, чтобы после выхода не вводить их заново
+const LAST_LOGIN_KEY = 'max-chat:last-login';
+export const loadLastLogin = () => read<Pick<Credentials, 'apiUrl' | 'idInstance'>>(localStorage, LAST_LOGIN_KEY);
+export const saveLastLogin = ({ apiUrl, idInstance }: Credentials) =>
+  write(localStorage, LAST_LOGIN_KEY, { apiUrl, idInstance });
+
 export const clearCredentials = () => {
   try {
     sessionStorage.removeItem(CREDENTIALS_KEY);

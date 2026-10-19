@@ -44,7 +44,8 @@ interface SenderData {
 interface MessageData {
   typeMessage: string;
   textMessageData?: { textMessage: string };
-  extendedTextMessageData?: { text: string };
+  extendedTextMessageData?: { text: string; stanzaId?: string };
+  fileMessageData?: { caption?: string };
 }
 
 export interface MessageWebhook {

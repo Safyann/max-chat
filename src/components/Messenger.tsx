@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { checkAccount, getSettings, GreenApiError, sendMessage } from '../api/greenApi';
 import type { Credentials } from '../api/types';
+import { useChatHistory } from '../hooks/useChatHistory';
 import { useNotificationPolling } from '../hooks/useNotificationPolling';
-import { chatReducer } from '../lib/chatReducer';
+import { chatActivity, chatReducer, LOCAL_ID_PREFIX, type Message } from '../lib/chatReducer';
 import type { ChatEvent } from '../lib/notifications';
 import { phoneToChatId } from '../lib/phone';
 import { diagnoseSettings } from '../lib/settings';
@@ -16,7 +17,9 @@ const METHOD_UNSUPPORTED_STATUSES = new Set([400, 404, 405]);
 
 // crypto.randomUUID есть только в secure context: при открытии dev-сервера по http://192.168.x.x отправка падала бы
 const createLocalId = () =>
-  `local-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
+  `${LOCAL_ID_PREFIX}${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
+
+const SETTINGS_RECHECK_MS = 60_000;
 
 interface MessengerProps {
   credentials: Credentials;
@@ -32,31 +35,34 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
 
   const [settingsProblems, setSettingsProblems] = useState<string[]>([]);
 
+  // настройки перепроверяем периодически и при возврате на вкладку: пользователь мог исправить их в консоли
   useEffect(() => {
     const controller = new AbortController();
-    getSettings(credentials, controller.signal)
-      .then((settings) => setSettingsProblems(diagnoseSettings(settings)))
-      // проверка вспомогательная: если не удалась, чат всё равно работает
-      .catch(() => undefined);
-    return () => controller.abort();
+    const check = () =>
+      getSettings(credentials, controller.signal)
+        .then((settings) => setSettingsProblems(diagnoseSettings(settings)))
+        // проверка вспомогательная: если не удалась, чат всё равно работает
+        .catch(() => undefined);
+
+    void check();
+    const timer = setInterval(check, SETTINGS_RECHECK_MS);
+    window.addEventListener('focus', check);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+      window.removeEventListener('focus', check);
+    };
   }, [credentials]);
 
   const handleEvent = useCallback((event: ChatEvent) => dispatch({ type: 'eventReceived', event }), []);
   const pollingError = useNotificationPolling(credentials, handleEvent);
+  const { openChat, closeChat } = useChatHistory(state, dispatch);
 
   const chats = useMemo(
-    () =>
-      // только что созданный пустой чат — наверх, а не в конец списка
-      Object.values(state.chats).sort((a, b) => {
-        const lastA = a.messages.at(-1)?.timestamp ?? Number.MAX_SAFE_INTEGER;
-        const lastB = b.messages.at(-1)?.timestamp ?? Number.MAX_SAFE_INTEGER;
-        return lastB - lastA;
-      }),
+    () => Object.values(state.chats).sort((a, b) => chatActivity(b) - chatActivity(a)),
     [state.chats],
   );
   const activeChat = state.activeChatId ? state.chats[state.activeChatId] : null;
-
-  const openChat = (chatId: string) => dispatch({ type: 'chatOpened', chatId });
 
   const createChat = async (phone: string) => {
     const existing = Object.values(state.chats).find(
@@ -78,20 +84,29 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
       const isUnsupported = err instanceof GreenApiError && METHOD_UNSUPPORTED_STATUSES.has(err.status ?? 0);
       if (!isUnsupported) throw err;
     }
-    dispatch({ type: 'chatOpened', chatId, phone });
+    openChat(chatId, phone);
   };
 
-  const handleSend = async (text: string) => {
-    if (!activeChat) return;
-    const { chatId } = activeChat;
-    const localId = createLocalId();
-    dispatch({ type: 'sendStarted', chatId, localId, text, timestamp: Date.now() });
+  const deliver = async (chatId: string, localId: string, text: string) => {
     try {
       const idMessage = await sendMessage(credentials, chatId, text);
       dispatch({ type: 'sendSucceeded', chatId, localId, idMessage });
     } catch {
       dispatch({ type: 'sendFailed', chatId, localId });
     }
+  };
+
+  const handleSend = (text: string) => {
+    if (!activeChat) return;
+    const localId = createLocalId();
+    dispatch({ type: 'sendStarted', chatId: activeChat.chatId, localId, text, timestamp: Date.now() });
+    void deliver(activeChat.chatId, localId, text);
+  };
+
+  const handleRetry = (message: Message) => {
+    if (!activeChat) return;
+    dispatch({ type: 'resendStarted', chatId: activeChat.chatId, localId: message.id });
+    void deliver(activeChat.chatId, message.id, message.text);
   };
 
   return (
@@ -127,7 +142,7 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
 
       <main className="main">
         {activeChat ? (
-          <ChatPanel chat={activeChat} onSend={handleSend} onBack={() => dispatch({ type: 'chatClosed' })} />
+          <ChatPanel chat={activeChat} onSend={handleSend} onRetry={handleRetry} onBack={closeChat} />
         ) : (
           <div className="main__placeholder">Выберите чат или создайте новый по номеру телефона</div>
         )}

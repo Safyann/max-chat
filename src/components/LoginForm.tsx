@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { getStateInstance } from '../api/greenApi';
 import type { Credentials } from '../api/types';
+import { loadLastLogin, saveLastLogin } from '../lib/storage';
 
 const DEFAULT_API_URL = 'https://api.green-api.com';
 
@@ -9,8 +10,9 @@ interface LoginFormProps {
 }
 
 export const LoginForm = ({ onLogin }: LoginFormProps) => {
-  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
-  const [idInstance, setIdInstance] = useState('');
+  const [lastLogin] = useState(loadLastLogin);
+  const [apiUrl, setApiUrl] = useState(lastLogin?.apiUrl ?? DEFAULT_API_URL);
+  const [idInstance, setIdInstance] = useState(lastLogin?.idInstance ?? '');
   const [apiTokenInstance, setApiTokenInstance] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -23,11 +25,17 @@ export const LoginForm = ({ onLogin }: LoginFormProps) => {
       apiTokenInstance: apiTokenInstance.trim(),
     };
 
+    if (!/^\d+$/.test(credentials.idInstance)) {
+      setError('idInstance состоит только из цифр, например 3100123456');
+      return;
+    }
+
     setError(null);
     setIsChecking(true);
     try {
       const state = await getStateInstance(credentials);
       if (state === 'authorized') {
+        saveLastLogin(credentials);
         onLogin(credentials);
       } else {
         setError(`Инстанс не авторизован (состояние: ${state}). Привяжите аккаунт MAX в консоли GREEN-API.`);
@@ -59,7 +67,7 @@ export const LoginForm = ({ onLogin }: LoginFormProps) => {
             inputMode="numeric"
             autoComplete="username"
             required
-            autoFocus
+            autoFocus={!lastLogin}
           />
         </label>
 
@@ -71,6 +79,7 @@ export const LoginForm = ({ onLogin }: LoginFormProps) => {
             value={apiTokenInstance}
             onChange={(e) => setApiTokenInstance(e.target.value)}
             autoComplete="current-password"
+            autoFocus={Boolean(lastLogin)}
             required
           />
         </label>

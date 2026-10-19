@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatReducer, initialChatState, type ChatState } from './chatReducer';
+import { chatActivity, chatReducer, initialChatState, type ChatState } from './chatReducer';
 import { parseWebhook, type ChatEvent } from './notifications';
 import { formatChatId, isValidPhone, normalizePhone, phoneToChatId } from './phone';
 import { diagnoseSettings } from './settings';
@@ -56,14 +56,19 @@ describe('parseWebhook', () => {
   it('разбирает ответ с цитатой (quotedMessage)', () => {
     const quoted = {
       ...incoming('m5', ''),
-      messageData: { typeMessage: 'quotedMessage', extendedTextMessageData: { text: 'ответ на цитату' } },
+      messageData: {
+        typeMessage: 'quotedMessage',
+        extendedTextMessageData: { text: 'ответ на цитату', stanzaId: 'api-1' },
+      },
     };
-    expect(parseWebhook(quoted)).toMatchObject({ kind: 'message', direction: 'in', text: 'ответ на цитату' });
+    expect(parseWebhook(quoted)).toMatchObject({ kind: 'message', text: 'ответ на цитату', quotedId: 'api-1' });
   });
 
-  it('игнорирует нетекстовые сообщения и служебные уведомления', () => {
-    const image = { ...incoming('m3', ''), messageData: { typeMessage: 'imageMessage' } };
-    expect(parseWebhook(image)).toBeNull();
+  it('нетекстовое сообщение показывает заглушкой, служебные уведомления игнорирует', () => {
+    const image = { ...incoming('m3', ''), messageData: { typeMessage: 'imageMessage', fileMessageData: { caption: 'море' } } };
+    expect(parseWebhook(image)).toMatchObject({ unsupported: true, text: expect.stringMatching(/^🖼 Фото.*\nморе$/s) });
+    const unknown = { ...incoming('m4', ''), messageData: { typeMessage: 'somethingNew' } };
+    expect(parseWebhook(unknown)).toMatchObject({ unsupported: true, text: expect.stringContaining('Сообщение') });
     expect(parseWebhook({ typeWebhook: 'stateInstanceChanged' })).toBeNull();
   });
 
@@ -184,6 +189,33 @@ describe('chatReducer', () => {
 
     expect(Object.keys(state.chats)).toEqual(['10000000']);
     expect(state.chats['10000000'].messages[0]).toMatchObject({ id: 'api-1', status: 'sent' });
+  });
+
+  it('после перезагрузки во время отправки подтверждает «не отправлено», а не дублирует', () => {
+    let state = chatReducer(initialChatState, { type: 'sendStarted', chatId: CHAT_ID, localId: 'local-1', text: 'hi', timestamp: 1 });
+    state = chatReducer(state, { type: 'sendFailed', chatId: CHAT_ID, localId: 'local-1' }); // так помечает loadChats
+    state = apply(state, { kind: 'message', chatId: CHAT_ID, id: 'api-1', text: 'hi', direction: 'out', timestamp: 2 });
+    expect(state.chats[CHAT_ID].messages).toEqual([
+      expect.objectContaining({ id: 'api-1', status: 'sent', timestamp: 1 }),
+    ]);
+  });
+
+  it('повтор отправки неотправленного сообщения', () => {
+    let state = chatReducer(initialChatState, { type: 'sendStarted', chatId: CHAT_ID, localId: 'local-1', text: 'hi', timestamp: 1 });
+    state = chatReducer(state, { type: 'sendFailed', chatId: CHAT_ID, localId: 'local-1' });
+    state = chatReducer(state, { type: 'resendStarted', chatId: CHAT_ID, localId: 'local-1' });
+    expect(state.chats[CHAT_ID].messages[0].status).toBe('pending');
+    state = chatReducer(state, { type: 'sendSucceeded', chatId: CHAT_ID, localId: 'local-1', idMessage: 'api-1' });
+    expect(state.chats[CHAT_ID].messages).toEqual([expect.objectContaining({ id: 'api-1', status: 'sent' })]);
+  });
+
+  it('пустой чат сортируется по времени создания, а не висит наверху всегда', () => {
+    let state = apply(initialChatState, parseWebhook(incoming('m1', 'старое', 1000))!);
+    state = chatReducer(state, { type: 'chatOpened', chatId: 'new@c.us', timestamp: 2_000_000 });
+    const fresh = { ...incoming('m2', 'свежее', 3000), senderData: { chatId: 'other@c.us' } };
+    state = apply(state, parseWebhook(fresh)!);
+    const order = Object.values(state.chats).sort((a, b) => chatActivity(b) - chatActivity(a)).map((c) => c.chatId);
+    expect(order).toEqual(['other@c.us', 'new@c.us', CHAT_ID]);
   });
 
   it('игнорирует статус сообщения из незнакомого чата', () => {
