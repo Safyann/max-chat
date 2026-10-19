@@ -1,4 +1,5 @@
 import type {
+  CheckAccountResponse,
   Credentials,
   DeleteNotificationResponse,
   InstanceSettings,
@@ -17,7 +18,14 @@ export class GreenApiError extends Error {
   }
 }
 
-const buildUrl = ({ apiUrl, idInstance, apiTokenInstance }: Credentials, method: string, suffix = '') =>
+const ERROR_REASONS: Record<number, string> = {
+  401: 'Неверный idInstance или apiTokenInstance',
+  403: 'Неверный idInstance или apiTokenInstance',
+  466: 'Исчерпана квота тарифа GREEN-API',
+  469: 'MAX ограничил проверку номеров, повторите через пару часов',
+};
+
+const buildUrl =({ apiUrl, idInstance, apiTokenInstance }: Credentials, method: string, suffix = '') =>
   `${apiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/${method}/${apiTokenInstance}${suffix}`;
 
 const request = async <T>(url: string, init?: RequestInit): Promise<T | null> => {
@@ -30,11 +38,7 @@ const request = async <T>(url: string, init?: RequestInit): Promise<T | null> =>
   }
 
   if (!response.ok) {
-    const reason =
-      response.status === 401 || response.status === 403
-        ? 'Неверный idInstance или apiTokenInstance'
-        : `Ошибка GREEN-API (${response.status})`;
-    throw new GreenApiError(reason, response.status);
+    throw new GreenApiError(ERROR_REASONS[response.status] ?? `Ошибка GREEN-API (${response.status})`, response.status);
   }
 
   // receiveNotification отдаёт пустое тело (или null), если за receiveTimeout уведомлений не пришло
@@ -51,6 +55,17 @@ export const getStateInstance = async (credentials: Credentials, signal?: AbortS
 export const getSettings = async (credentials: Credentials, signal?: AbortSignal) => {
   const data = await request<InstanceSettings>(buildUrl(credentials, 'getSettings'), { signal });
   if (!data) throw new GreenApiError('Пустой ответ getSettings');
+  return data;
+};
+
+/** MAX: chatId пользователя по номеру телефона (принимаются только номера +7 и +375). */
+export const checkAccount = async (credentials: Credentials, phone: string) => {
+  const data = await request<CheckAccountResponse>(buildUrl(credentials, 'checkAccount'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phoneNumber: Number(phone) }),
+  });
+  if (!data) throw new GreenApiError('Пустой ответ checkAccount');
   return data;
 };
 

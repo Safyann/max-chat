@@ -17,7 +17,7 @@ export const ChatList = ({ chats, activeChatId, onSelect }: ChatListProps) => {
     <ul className="chat-list">
       {chats.map((chat) => {
         const last = chat.messages.at(-1);
-        const title = chat.title || formatChatId(chat.chatId);
+        const title = chat.title || (chat.phone ? `+${chat.phone}` : formatChatId(chat.chatId));
         return (
           <li key={chat.chatId}>
             <button

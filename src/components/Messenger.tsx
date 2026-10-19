@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
-import { getSettings, sendMessage } from '../api/greenApi';
+import { checkAccount, getSettings, GreenApiError, sendMessage } from '../api/greenApi';
 import type { Credentials } from '../api/types';
 import { useNotificationPolling } from '../hooks/useNotificationPolling';
 import { chatReducer } from '../lib/chatReducer';
 import type { ChatEvent } from '../lib/notifications';
+import { phoneToChatId } from '../lib/phone';
 import { diagnoseSettings } from '../lib/settings';
 import { loadChats, saveChats } from '../lib/storage';
 import { ChatList } from './ChatList';
 import { ChatPanel } from './ChatPanel';
 import { NewChatForm } from './NewChatForm';
+
+// так отвечает инстанс, у которого нет checkAccount (WhatsApp) или номер вне +7/+375
+const METHOD_UNSUPPORTED_STATUSES = new Set([400, 404, 405]);
 
 interface MessengerProps {
   credentials: Credentials;
@@ -46,6 +50,29 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
   const activeChat = state.activeChatId ? state.chats[state.activeChatId] : null;
 
   const openChat = (chatId: string) => dispatch({ type: 'chatOpened', chatId });
+
+  const createChat = async (phone: string) => {
+    const existing = Object.values(state.chats).find(
+      (chat) => chat.phone === phone || chat.chatId === phoneToChatId(phone),
+    );
+    if (existing) {
+      openChat(existing.chatId);
+      return;
+    }
+
+    // В MAX входящие приходят с chatId пользователя, а не с номером — узнаём его заранее,
+    // чтобы ответы попадали в этот же чат. Не-MAX инстанс (WhatsApp) метода не знает — тогда шлём на phone@c.us.
+    let chatId = phoneToChatId(phone);
+    try {
+      const account = await checkAccount(credentials, phone);
+      if (!account.exist) throw new Error('У этого номера нет аккаунта MAX');
+      chatId = account.chatId;
+    } catch (err) {
+      const isUnsupported = err instanceof GreenApiError && METHOD_UNSUPPORTED_STATUSES.has(err.status ?? 0);
+      if (!isUnsupported) throw err;
+    }
+    dispatch({ type: 'chatOpened', chatId, phone });
+  };
 
   const handleSend = async (text: string) => {
     if (!activeChat) return;
@@ -87,7 +114,7 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
             </ul>
           </div>
         )}
-        <NewChatForm onCreate={openChat} />
+        <NewChatForm onCreate={createChat} />
         <ChatList chats={chats} activeChatId={state.activeChatId} onSelect={openChat} />
       </aside>
 

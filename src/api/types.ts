@@ -12,6 +12,11 @@ export interface StateInstanceResponse {
   stateInstance: string;
 }
 
+export interface CheckAccountResponse {
+  exist: boolean;
+  chatId: string;
+}
+
 export interface InstanceSettings {
   webhookUrl?: string;
   incomingWebhook?: string;
@@ -32,6 +37,8 @@ interface SenderData {
   sender?: string;
   senderName?: string;
   senderContactName?: string;
+  /** только MAX: номер отправителя числом, 0 если неизвестен */
+  senderPhoneNumber?: number;
 }
 
 interface MessageData {

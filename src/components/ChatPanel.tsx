@@ -29,7 +29,7 @@ interface ChatPanelProps {
 
 export const ChatPanel = ({ chat, onSend, onBack }: ChatPanelProps) => {
   const listRef = useRef<HTMLDivElement>(null);
-  const subtitle = formatChatId(chat.chatId);
+  const subtitle = chat.phone ? `+${chat.phone}` : formatChatId(chat.chatId);
   const title = chat.title || subtitle;
 
   useEffect(() => {

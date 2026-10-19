@@ -122,6 +122,53 @@ describe('chatReducer', () => {
     expect(state.chats[CHAT_ID].messages[0].status).toBe('read');
   });
 
+  it('MAX: переносит чат, открытый по номеру, под chatId пользователя из входящего', () => {
+    let state = chatReducer(initialChatState, { type: 'chatOpened', chatId: CHAT_ID });
+    state = chatReducer(state, { type: 'sendStarted', chatId: CHAT_ID, localId: 'l', text: 'привет', timestamp: 1 });
+
+    const maxIncoming = {
+      ...incoming('m1', 'ответ'),
+      senderData: { chatId: '10000000', sender: '10000000', senderName: 'Иван', senderPhoneNumber: 79991234567 },
+    };
+    state = apply(state, parseWebhook(maxIncoming)!);
+
+    expect(Object.keys(state.chats)).toEqual(['10000000']);
+    expect(state.activeChatId).toBe('10000000');
+    expect(state.chats['10000000']).toMatchObject({ phone: '79991234567', title: 'Иван', unread: 0 });
+    expect(state.chats['10000000'].messages.map((m) => m.text)).toEqual(['привет', 'ответ']);
+  });
+
+  it('MAX: chatOpened с номером сразу кладёт чат под chatId пользователя', () => {
+    let state = chatReducer(initialChatState, { type: 'chatOpened', chatId: '10000000', phone: '79991234567' });
+    const maxIncoming = {
+      ...incoming('m1', 'ответ'),
+      senderData: { chatId: '10000000', sender: '10000000', senderPhoneNumber: 79991234567 },
+    };
+    state = apply(state, parseWebhook(maxIncoming)!);
+    expect(Object.keys(state.chats)).toEqual(['10000000']);
+    expect(state.chats['10000000'].messages).toHaveLength(1);
+  });
+
+  it('MAX: вливает уже разделившиеся чаты (по номеру и по chatId) в один', () => {
+    let state = chatReducer(initialChatState, { type: 'sendStarted', chatId: CHAT_ID, localId: 'l', text: 'привет', timestamp: 1000 });
+    const reply = (id: string, timestamp: number) => ({
+      ...incoming(id, id, timestamp),
+      senderData: { chatId: '10000000', sender: '10000000', senderPhoneNumber: 0 },
+    });
+    state = apply(state, parseWebhook(reply('r1', 2))!); // старая версия: phone не пришёл — отдельный чат
+    expect(Object.keys(state.chats)).toHaveLength(2);
+
+    const withPhone = { ...reply('r2', 3), senderData: { chatId: '10000000', sender: '10000000', senderPhoneNumber: 79991234567 } };
+    state = apply(state, parseWebhook(withPhone)!);
+    expect(Object.keys(state.chats)).toEqual(['10000000']);
+    expect(state.chats['10000000'].messages.map((m) => m.text)).toEqual(['привет', 'r1', 'r2']);
+  });
+
+  it('игнорирует статус сообщения из незнакомого чата', () => {
+    const state = apply(initialChatState, { kind: 'status', chatId: 'unknown', id: 'x', status: 'read' });
+    expect(state.chats).toEqual({});
+  });
+
   it('помечает неотправленное', () => {
     let state = chatReducer(initialChatState, { type: 'sendStarted', chatId: CHAT_ID, localId: 'l', text: 'x', timestamp: 1 });
     state = chatReducer(state, { type: 'sendFailed', chatId: CHAT_ID, localId: 'l' });

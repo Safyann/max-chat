@@ -1,15 +1,17 @@
 import { useState, type FormEvent } from 'react';
-import { isValidPhone, normalizePhone, phoneToChatId } from '../lib/phone';
+import { isValidPhone, normalizePhone } from '../lib/phone';
 
 interface NewChatFormProps {
-  onCreate: (chatId: string) => void;
+  /** получает номер вида 79991234567; отклонённый промис — текст ошибки для пользователя */
+  onCreate: (phone: string) => Promise<void>;
 }
 
 export const NewChatForm = ({ onCreate }: NewChatFormProps) => {
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     const normalized = normalizePhone(phone);
     if (!isValidPhone(normalized)) {
@@ -17,8 +19,15 @@ export const NewChatForm = ({ onCreate }: NewChatFormProps) => {
       return;
     }
     setError(null);
-    setPhone('');
-    onCreate(phoneToChatId(normalized));
+    setIsCreating(true);
+    try {
+      await onCreate(normalized);
+      setPhone('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось создать чат');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -33,8 +42,8 @@ export const NewChatForm = ({ onCreate }: NewChatFormProps) => {
           aria-label="Номер телефона получателя"
           aria-invalid={Boolean(error)}
         />
-        <button className="button button--compact" type="submit" disabled={!phone.trim()}>
-          Новый чат
+        <button className="button button--compact" type="submit" disabled={!phone.trim() || isCreating}>
+          {isCreating ? 'Ищем…' : 'Новый чат'}
         </button>
       </div>
       {error && (

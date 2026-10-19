@@ -1,5 +1,6 @@
 import type { MessageStatus } from '../api/types';
 import type { ChatEvent } from './notifications';
+import { phoneToChatId } from './phone';
 
 export interface Message {
   /** idMessage от GREEN-API; для ещё не отправленного — локальный id */
@@ -13,6 +14,8 @@ export interface Message {
 export interface Chat {
   chatId: string;
   title?: string;
+  /** номер собеседника, 79991234567 */
+  phone?: string;
   messages: Message[];
   unread: number;
 }
@@ -23,7 +26,7 @@ export interface ChatState {
 }
 
 export type ChatAction =
-  | { type: 'chatOpened'; chatId: string }
+  | { type: 'chatOpened'; chatId: string; phone?: string }
   | { type: 'chatClosed' }
   | { type: 'eventReceived'; event: ChatEvent }
   | { type: 'sendStarted'; chatId: string; localId: string; text: string; timestamp: number }
@@ -43,7 +46,34 @@ const withChat = (state: ChatState, chat: Chat): ChatState => ({
   chats: { ...state.chats, [chat.chatId]: chat },
 });
 
-const updateMessage = (chat: Chat, id: string, update: (message: Message) => Message): Chat => ({
+/**
+ * MAX присылает входящие с chatId-идентификатором пользователя, а чат мог быть открыт по номеру (phone@c.us).
+ * Чат с тем же номером под другим chatId переносим (или вливаем, если оба уже есть) под chatId пользователя.
+ */
+const adoptChatByPhone = (state: ChatState, chatId: string, phone: string): ChatState => {
+  const byPhone = Object.values(state.chats).find(
+    (chat) => chat.chatId !== chatId && (chat.phone === phone || chat.chatId === phoneToChatId(phone)),
+  );
+  if (!byPhone) return state;
+
+  const target = state.chats[chatId];
+  const merged: Chat = target
+    ? {
+        ...target,
+        title: target.title || byPhone.title,
+        messages: [...byPhone.messages, ...target.messages].sort((a, b) => a.timestamp - b.timestamp),
+        unread: target.unread + byPhone.unread,
+      }
+    : byPhone;
+
+  const { [byPhone.chatId]: _, ...rest } = state.chats;
+  return {
+    chats: { ...rest, [chatId]: { ...merged, chatId, phone } },
+    activeChatId: state.activeChatId === byPhone.chatId ? chatId : state.activeChatId,
+  };
+};
+
+const updateMessage =(chat: Chat, id: string, update: (message: Message) => Message): Chat => ({
   ...chat,
   messages: chat.messages.map((message) => (message.id === id ? update(message) : message)),
 });
@@ -52,7 +82,10 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
   switch (action.type) {
     case 'chatOpened': {
       const chat = getChat(state, action.chatId);
-      return { ...withChat(state, { ...chat, unread: 0 }), activeChatId: action.chatId };
+      return {
+        ...withChat(state, { ...chat, phone: action.phone || chat.phone, unread: 0 }),
+        activeChatId: action.chatId,
+      };
     }
 
     case 'chatClosed':
@@ -60,9 +93,11 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 
     case 'eventReceived': {
       const { event } = action;
-      const chat = getChat(state, event.chatId);
 
       if (event.kind === 'status') {
+        // статус сообщения из чата, которого нет в списке (например, отправленного с телефона), игнорируем
+        const chat = state.chats[event.chatId];
+        if (!chat) return state;
         return withChat(
           state,
           updateMessage(chat, event.id, (message) =>
@@ -72,6 +107,9 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
           ),
         );
       }
+
+      if (event.phone) state = adoptChatByPhone(state, event.chatId, event.phone);
+      const chat = getChat(state, event.chatId);
 
       // исходящее через API уже лежит в чате после sendSucceeded — повторно не добавляем
       if (chat.messages.some((message) => message.id === event.id)) return state;
@@ -87,7 +125,10 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       return withChat(state, {
         ...chat,
         title: event.chatName || chat.title,
-        messages: [...chat.messages, message].sort((a, b) => a.timestamp - b.timestamp),
+        phone: event.phone || chat.phone,
+        // очередь уведомлений FIFO, поэтому просто дописываем в конец: время сервера с точностью до секунды
+        // и локальное время отправки в мс, сортировка могла поставить быстрый ответ выше вопроса
+        messages: [...chat.messages, message],
         unread: event.direction === 'in' && !isActive ? chat.unread + 1 : chat.unread,
       });
     }

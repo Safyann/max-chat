@@ -5,6 +5,8 @@ export type ChatEvent =
       kind: 'message';
       chatId: string;
       chatName?: string;
+      /** номер собеседника (MAX присылает его во входящих отдельно от chatId) */
+      phone?: string;
       id: string;
       text: string;
       direction: 'in' | 'out';
@@ -49,6 +51,7 @@ export const parseWebhook = (body: WebhookBody): ChatEvent | null => {
       chatId: senderData.chatId,
       // в исходящих senderName — это мы сами, поэтому имя собеседника берём только из входящих
       chatName: isIncoming ? senderData.senderContactName || senderData.chatName || senderData.senderName : undefined,
+      phone: isIncoming && senderData.senderPhoneNumber ? String(senderData.senderPhoneNumber) : undefined,
       id: webhook.idMessage,
       text,
       direction: isIncoming ? 'in' : 'out',
