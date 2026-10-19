@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer } from 'react';
-import { sendMessage } from '../api/greenApi';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { getSettings, sendMessage } from '../api/greenApi';
 import type { Credentials } from '../api/types';
 import { useNotificationPolling } from '../hooks/useNotificationPolling';
 import { chatReducer } from '../lib/chatReducer';
 import type { ChatEvent } from '../lib/notifications';
+import { diagnoseSettings } from '../lib/settings';
 import { loadChats, saveChats } from '../lib/storage';
 import { ChatList } from './ChatList';
 import { ChatPanel } from './ChatPanel';
@@ -20,6 +21,17 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
   useEffect(() => {
     saveChats(credentials.idInstance, state.chats);
   }, [credentials.idInstance, state.chats]);
+
+  const [settingsProblems, setSettingsProblems] = useState<string[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getSettings(credentials, controller.signal)
+      .then((settings) => setSettingsProblems(diagnoseSettings(settings)))
+      // проверка вспомогательная: если не удалась, чат всё равно работает
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [credentials]);
 
   const handleEvent = useCallback((event: ChatEvent) => dispatch({ type: 'eventReceived', event }), []);
   const pollingError = useNotificationPolling(credentials, handleEvent);
@@ -64,6 +76,16 @@ export const Messenger = ({ credentials, onLogout }: MessengerProps) => {
           <p className="sidebar__error" role="alert">
             {pollingError}. Повторяем…
           </p>
+        )}
+        {settingsProblems.length > 0 && (
+          <div className="sidebar__error" role="alert">
+            Настройки инстанса в консоли GREEN-API:
+            <ul className="sidebar__error-list">
+              {settingsProblems.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          </div>
         )}
         <NewChatForm onCreate={openChat} />
         <ChatList chats={chats} activeChatId={state.activeChatId} onSelect={openChat} />

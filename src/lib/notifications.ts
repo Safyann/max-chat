@@ -24,6 +24,8 @@ const extractText = ({ messageData }: MessageWebhook) => {
     case 'textMessage':
       return messageData.textMessageData?.textMessage;
     case 'extendedTextMessage':
+    // ответ с цитатой («Ответить» в WhatsApp): текст лежит там же, где у extendedTextMessage
+    case 'quotedMessage':
       return messageData.extendedTextMessageData?.text;
     default:
       return undefined;

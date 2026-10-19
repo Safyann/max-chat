@@ -12,6 +12,13 @@ export interface StateInstanceResponse {
   stateInstance: string;
 }
 
+export interface InstanceSettings {
+  webhookUrl?: string;
+  incomingWebhook?: string;
+  outgoingWebhook?: string;
+  outgoingAPIMessageWebhook?: string;
+}
+
 export interface DeleteNotificationResponse {
   result: boolean;
   reason?: string;

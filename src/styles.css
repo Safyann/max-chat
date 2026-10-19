@@ -230,6 +230,11 @@ a {
   font-size: 13px;
 }
 
+.sidebar__error-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
 .new-chat {
   padding: 0 16px 12px;
   border-bottom: 1px solid var(--border);

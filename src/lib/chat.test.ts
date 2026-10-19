@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { chatReducer, initialChatState, type ChatState } from './chatReducer';
 import { parseWebhook, type ChatEvent } from './notifications';
 import { formatChatId, isValidPhone, normalizePhone, phoneToChatId } from './phone';
+import { diagnoseSettings } from './settings';
 
 const CHAT_ID = '79991234567@c.us';
 
@@ -49,6 +50,14 @@ describe('parseWebhook', () => {
     expect(event).toMatchObject({ kind: 'message', direction: 'out', text: 'ссылка', chatName: undefined });
   });
 
+  it('разбирает ответ с цитатой (quotedMessage)', () => {
+    const quoted = {
+      ...incoming('m5', ''),
+      messageData: { typeMessage: 'quotedMessage', extendedTextMessageData: { text: 'ответ на цитату' } },
+    };
+    expect(parseWebhook(quoted)).toMatchObject({ kind: 'message', direction: 'in', text: 'ответ на цитату' });
+  });
+
   it('игнорирует нетекстовые сообщения и служебные уведомления', () => {
     const image = { ...incoming('m3', ''), messageData: { typeMessage: 'imageMessage' } };
     expect(parseWebhook(image)).toBeNull();
@@ -59,6 +68,16 @@ describe('parseWebhook', () => {
     expect(
       parseWebhook({ typeWebhook: 'outgoingMessageStatus', chatId: CHAT_ID, idMessage: 'm4', status: 'read', timestamp: 1 }),
     ).toEqual({ kind: 'status', chatId: CHAT_ID, id: 'm4', status: 'read' });
+  });
+});
+
+describe('diagnoseSettings', () => {
+  it('без замечаний при правильных настройках', () => {
+    expect(diagnoseSettings({ webhookUrl: '', incomingWebhook: 'yes', outgoingWebhook: 'yes' })).toEqual([]);
+  });
+
+  it('находит вебхук и выключенные уведомления', () => {
+    expect(diagnoseSettings({ webhookUrl: 'https://x', incomingWebhook: 'no', outgoingWebhook: 'no' })).toHaveLength(3);
   });
 });
 

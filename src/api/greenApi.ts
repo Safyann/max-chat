@@ -1,6 +1,7 @@
 import type {
   Credentials,
   DeleteNotificationResponse,
+  InstanceSettings,
   Notification,
   SendMessageResponse,
   StateInstanceResponse,
@@ -45,6 +46,12 @@ export const getStateInstance = async (credentials: Credentials, signal?: AbortS
   const data = await request<StateInstanceResponse>(buildUrl(credentials, 'getStateInstance'), { signal });
   if (!data) throw new GreenApiError('Пустой ответ getStateInstance');
   return data.stateInstance;
+};
+
+export const getSettings = async (credentials: Credentials, signal?: AbortSignal) => {
+  const data = await request<InstanceSettings>(buildUrl(credentials, 'getSettings'), { signal });
+  if (!data) throw new GreenApiError('Пустой ответ getSettings');
+  return data;
 };
 
 export const sendMessage = async (credentials: Credentials, chatId: string, message: string) => {
